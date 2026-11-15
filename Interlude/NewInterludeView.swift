@@ -12,7 +12,7 @@ struct NewInterludeView: View {
         GeometryReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Suggestions")
+                    Text("Configure one or more interludes")
                         .font(.headline)
                         .foregroundStyle(DaylightTheme.titleColor(for: colorScheme))
 
@@ -87,7 +87,7 @@ struct CustomInterludeEditor: View {
     private let screenTitle: String
 
     @State private var name: String
-    @State private var kind: InterludeKind
+    @State private var type: InterludeType
     @State private var repeatMinutes: Int
     @State private var includesDuration: Bool
     @State private var durationMinutes: Int
@@ -99,23 +99,23 @@ struct CustomInterludeEditor: View {
         screenTitle = template?.name ?? "Custom interlude"
         let repeatValue = template?.repeatMinutes ?? 25
         _name = State(initialValue: template?.name ?? "")
-        _kind = State(initialValue: template?.kind ?? .interval)
+        _type = State(initialValue: template?.type ?? .interval)
         _repeatMinutes = State(initialValue: repeatValue > 0 ? repeatValue : 25)
-        _includesDuration = State(initialValue: template?.kind != .timer && template?.durationMinutes != nil)
+        _includesDuration = State(initialValue: template?.type != .timer && template?.durationMinutes != nil)
         _durationMinutes = State(initialValue: template?.durationMinutes ?? 5)
     }
 
     var body: some View {
         Form {
             TextField("Name", text: $name)
-            Picker("Kind", selection: $kind) {
-                ForEach(InterludeKind.allCases) { kind in
-                    Text(kind.rawValue).tag(kind)
+            Picker("Type", selection: $type) {
+                ForEach(InterludeType.allCases) { type in
+                    Text(type.rawValue).tag(type)
                 }
             }
             .pickerStyle(.segmented)
 
-            if kind == .interval {
+            if type == .interval {
                 Stepper(value: $repeatMinutes, in: 1...180) {
                     Text(InterludeSchedule.everyPhrase(repeatMinutes))
                 }
@@ -133,7 +133,7 @@ struct CustomInterludeEditor: View {
                 }
             } else {
                 Stepper(value: $durationMinutes, in: 1...180) {
-                    Text(InterludeSchedule.detail(kind: .timer, repeatMinutes: 0, durationMinutes: durationMinutes))
+                    Text(InterludeSchedule.detail(type: .timer, repeatMinutes: 0, durationMinutes: durationMinutes))
                 }
             }
         }
@@ -153,11 +153,11 @@ struct CustomInterludeEditor: View {
                     onAdd(
                         SavedInterlude(
                             name: trimmed,
-                            symbolName: symbolName ?? kind.symbolName,
+                            symbolName: symbolName ?? type.symbolName,
                             tint: tint ?? DaylightTheme.pine,
-                            kind: kind,
-                            repeatMinutes: kind == .interval ? repeatMinutes : 0,
-                            durationMinutes: kind == .timer ? durationMinutes : (includesDuration ? min(durationMinutes, repeatMinutes) : nil)
+                            type: type,
+                            repeatMinutes: type == .interval ? repeatMinutes : 0,
+                            durationMinutes: type == .timer ? durationMinutes : (includesDuration ? min(durationMinutes, repeatMinutes) : nil)
                         )
                     )
                 }
