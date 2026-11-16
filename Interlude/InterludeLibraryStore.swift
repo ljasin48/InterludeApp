@@ -13,7 +13,8 @@ struct InterludeRecord: Codable, Identifiable {
     var runStyle: String
     var startMark: Int
     var occurrence: String
-    var notificationPreference: String
+    var notificationPreference: String? = nil
+    var alertsEnabled: Bool? = nil
     var isEnabled: Bool
     var didFinishSingle: Bool
     var isRunning: Bool? = nil
@@ -41,7 +42,7 @@ enum InterludeLibraryStore {
                 runStyle: interlude.runStyle.rawValue,
                 startMark: interlude.startMark.rawValue,
                 occurrence: interlude.occurrence.rawValue,
-                notificationPreference: interlude.notificationPreference.rawValue,
+                alertsEnabled: interlude.alertsEnabled,
                 isEnabled: interlude.isEnabled,
                 didFinishSingle: interlude.didFinishSingle,
                 isRunning: interlude.isRunning,
@@ -73,7 +74,7 @@ enum InterludeLibraryStore {
                 runStyle: RunStyle(rawValue: record.runStyle) ?? .manual,
                 startMark: StartMark(rawValue: record.startMark) ?? .onTheHour,
                 occurrence: Occurrence(rawValue: record.occurrence) ?? .recurring,
-                notificationPreference: NotificationPreference(rawValue: record.notificationPreference) ?? .off
+                alertsEnabled: record.alertsEnabled ?? (record.notificationPreference != nil && record.notificationPreference != "Off")
             )
             interlude.isEnabled = record.isEnabled
             interlude.didFinishSingle = record.didFinishSingle

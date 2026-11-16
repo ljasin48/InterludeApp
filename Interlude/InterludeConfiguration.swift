@@ -5,13 +5,22 @@ struct InterludeConfiguration: View {
     var onDone: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @FocusState private var nameFocused: Bool
+    @State private var showsIconPicker = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
-                TextField("Name", text: $interlude.name)
-                    .font(.headline)
-                    .foregroundStyle(DaylightTheme.titleColor(for: colorScheme))
+                Button {
+                    nameFocused = false
+                    showsIconPicker = true
+                } label: {
+                    InterludeDecal(symbolName: interlude.symbolName, tint: interlude.tint)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Choose icon")
+
+                nameField
                 Button("Done", action: onDone)
                     .buttonStyle(.bordered)
                     .foregroundStyle(DaylightTheme.titleColor(for: colorScheme))
@@ -50,11 +59,7 @@ struct InterludeConfiguration: View {
             }
             .pickerStyle(.segmented)
 
-            Picker("Notifications", selection: $interlude.notificationPreference) {
-                ForEach(NotificationPreference.allCases) { preference in
-                    Text(preference.rawValue).tag(preference)
-                }
-            }
+            Toggle("Alerts", isOn: $interlude.alertsEnabled)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -69,11 +74,33 @@ struct InterludeConfiguration: View {
                 interlude.didFinishSingle = false
             }
         }
-        .onChange(of: interlude.notificationPreference) { _, preference in
-            if preference != .off {
+        .onChange(of: interlude.alertsEnabled) { _, enabled in
+            if enabled {
                 InterludeNotifications.requestAccess()
             }
         }
+        .sheet(isPresented: $showsIconPicker) {
+            IconPicker(selection: $interlude.symbolName, tint: interlude.tint)
+        }
+    }
+
+    private var nameField: some View {
+        TextField("Name", text: $interlude.name)
+            .focused($nameFocused)
+            .font(.headline)
+            .foregroundStyle(DaylightTheme.titleColor(for: colorScheme))
+            .tint(.clear)
+            .overlay(alignment: .leading) {
+                if nameFocused {
+                    HStack(spacing: 2) {
+                        Text(interlude.name)
+                            .font(.headline)
+                            .hidden()
+                        TitleCursor(color: DaylightTheme.titleColor(for: colorScheme))
+                    }
+                    .accessibilityHidden(true)
+                }
+            }
     }
 
     private var appearanceControls: some View {
@@ -102,35 +129,6 @@ struct InterludeConfiguration: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel(swatch.name)
                         .accessibilityAddTraits(interlude.tintName == swatch.name ? .isSelected : [])
-                    }
-                }
-            }
-
-            Text("Icon")
-                .font(.subheadline)
-                .foregroundStyle(DaylightTheme.detailColor(interlude.tint, for: colorScheme))
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(InterludeSymbol.options, id: \.self) { symbol in
-                        Button {
-                            interlude.symbolName = symbol
-                        } label: {
-                            Image(systemName: symbol)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(interlude.symbolName == symbol ? .white : DaylightTheme.titleColor(for: colorScheme))
-                                .frame(width: 36, height: 36)
-                                .background(
-                                    interlude.symbolName == symbol ? interlude.tint : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(interlude.tint, lineWidth: interlude.symbolName == symbol ? 0 : 1)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(symbol)
-                        .accessibilityAddTraits(interlude.symbolName == symbol ? .isSelected : [])
                     }
                 }
             }
@@ -179,3 +177,67 @@ struct InterludeConfiguration: View {
         )
     }
 }
+private struct TitleCursor: View {
+    let color: Color
+    @State private var bright = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(color)
+            .frame(width: 2, height: 18)
+            .opacity(bright ? 1 : 0.2)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                    bright = true
+                }
+            }
+    }
+}
+
+private struct IconPicker: View {
+    @Binding var selection: String
+    let tint: Color
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let columns = [GridItem(.adaptive(minimum: 64), spacing: 12)]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(InterludeSymbol.options, id: \.self) { symbol in
+                        Button {
+                            selection = symbol
+                            dismiss()
+                        } label: {
+                            Image(systemName: symbol)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(selection == symbol ? .white : DaylightTheme.titleColor(for: colorScheme))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 56)
+                                .background(
+                                    selection == symbol ? tint : tint.opacity(0.2),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(symbol)
+                        .accessibilityAddTraits(selection == symbol ? .isSelected : [])
+                    }
+                }
+                .padding(24)
+            }
+            .navigationTitle("Icon")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                Button("Done", action: dismiss.callAsFunction)
+            }
+            .daylightBackground()
+        }
+    }
+}
+

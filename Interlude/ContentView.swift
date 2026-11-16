@@ -135,14 +135,6 @@ enum Occurrence: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum NotificationPreference: String, CaseIterable, Identifiable {
-    case off = "Off"
-    case banner = "Banner"
-    case bannerAndSound = "Banner and sound"
-
-    var id: String { rawValue }
-}
-
 struct SavedInterlude: Identifiable {
     let id: UUID
     var name: String
@@ -157,7 +149,7 @@ struct SavedInterlude: Identifiable {
     var runStyle: RunStyle
     var startMark: StartMark
     var occurrence: Occurrence
-    var notificationPreference: NotificationPreference
+    var alertsEnabled: Bool
 
     init(
         id: UUID = UUID(),
@@ -171,7 +163,7 @@ struct SavedInterlude: Identifiable {
         runStyle: RunStyle = .manual,
         startMark: StartMark = .onTheHour,
         occurrence: Occurrence = .recurring,
-        notificationPreference: NotificationPreference = .off
+        alertsEnabled: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -184,7 +176,7 @@ struct SavedInterlude: Identifiable {
         self.runStyle = runStyle
         self.startMark = startMark
         self.occurrence = occurrence
-        self.notificationPreference = notificationPreference
+        self.alertsEnabled = alertsEnabled
     }
 
     var isRunning = false
@@ -593,7 +585,7 @@ struct ContentView: View {
 
     private var libraryToken: String {
         interludes.map { interlude in
-            "\(interlude.id)|\(interlude.name)|\(interlude.symbolName)|\(interlude.tintName)|\(interlude.type.rawValue)|\(interlude.repeatMinutes)|\(interlude.durationMinutes ?? -1)|\(interlude.runStyle.rawValue)|\(interlude.startMark.rawValue)|\(interlude.occurrence.rawValue)|\(interlude.notificationPreference.rawValue)|\(interlude.isEnabled)|\(interlude.didFinishSingle)|\(interlude.isRunning)"
+            "\(interlude.id)|\(interlude.name)|\(interlude.symbolName)|\(interlude.tintName)|\(interlude.type.rawValue)|\(interlude.repeatMinutes)|\(interlude.durationMinutes ?? -1)|\(interlude.runStyle.rawValue)|\(interlude.startMark.rawValue)|\(interlude.occurrence.rawValue)|\(interlude.alertsEnabled)|\(interlude.isEnabled)|\(interlude.didFinishSingle)|\(interlude.isRunning)"
         }.joined(separator: ";")
     }
 
@@ -754,13 +746,10 @@ private struct InterludeCard: View {
                 InterludeConfiguration(interlude: $interlude) {
                     isFlipped = false
                 }
-                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
             } else {
                 front
             }
         }
-        .rotation3DEffect(.degrees(isFlipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
-        .animation(.spring(duration: 0.5), value: isFlipped)
     }
 
     private var front: some View {
@@ -802,7 +791,7 @@ private struct InterludeCard: View {
                     .accessibilityValue(remainingText)
                 Text(remainingText)
                     .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(interlude.tint)
+                    .foregroundStyle(DaylightTheme.detailColor(interlude.tint, for: colorScheme))
                     .accessibilityHidden(true)
             }
             .allowsHitTesting(false)

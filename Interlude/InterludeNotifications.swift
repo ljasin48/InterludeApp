@@ -22,7 +22,7 @@ enum InterludeNotifications {
         let center = UNUserNotificationCenter.current()
         let identifier = completionIdentifier(interlude.id)
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
-        guard interlude.notificationPreference != .off, interlude.isRunning else { return }
+        guard interlude.alertsEnabled, interlude.isRunning else { return }
         let remaining = interlude.remaining(at: date)
         guard remaining >= 1 else { return }
         let content = content(for: interlude)
@@ -35,7 +35,7 @@ enum InterludeNotifications {
     }
 
     private static func startRequest(for interlude: SavedInterlude) -> UNNotificationRequest? {
-        guard interlude.notificationPreference != .off,
+        guard interlude.alertsEnabled,
               interlude.isEnabled,
               interlude.runStyle == .automatic,
               !interlude.didFinishSingle else {
@@ -55,9 +55,7 @@ enum InterludeNotifications {
     private static func content(for interlude: SavedInterlude) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = interlude.name
-        if interlude.notificationPreference == .bannerAndSound {
-            content.sound = .default
-        }
+        content.sound = .default
         return content
     }
 
