@@ -27,6 +27,66 @@ enum DaylightTheme {
     static func detailColor(_ tint: Color, for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark ? tint.mix(with: .white, by: 0.62) : tint
     }
+
+    static func color(named name: String) -> Color {
+        switch name {
+        case "leaf": leaf
+        case "amber": amber
+        case "sky": sky
+        case "water": water
+        case "rose": rose
+        case "lilac": lilac
+        case "tomato": tomato
+        case "mist": mist
+        default: pine
+        }
+    }
+
+    static let swatches: [DaylightSwatch] = [
+        DaylightSwatch(name: "pine", color: pine),
+        DaylightSwatch(name: "leaf", color: leaf),
+        DaylightSwatch(name: "amber", color: amber),
+        DaylightSwatch(name: "sky", color: sky),
+        DaylightSwatch(name: "water", color: water),
+        DaylightSwatch(name: "rose", color: rose),
+        DaylightSwatch(name: "lilac", color: lilac),
+        DaylightSwatch(name: "tomato", color: tomato),
+    ]
+}
+
+struct DaylightSwatch: Identifiable {
+    let name: String
+    let color: Color
+    var id: String { name }
+}
+
+enum InterludeSymbol {
+    static let options = [
+        "slider.horizontal.3",
+        "figure.walk",
+        "cup.and.saucer",
+        "eye",
+        "lungs",
+        "drop.fill",
+        "fork.knife",
+        "figure.flexibility",
+        "timer",
+        "book",
+        "laptopcomputer",
+        "moon",
+        "sun.max",
+        "heart",
+        "leaf",
+        "flame",
+        "bell",
+        "pencil",
+        "music.note",
+        "bed.double",
+        "brain.head.profile",
+        "dumbbell",
+        "figure.mind.and.body",
+        "star",
+    ]
 }
 
 enum InterludeType: String, CaseIterable, Identifiable {
@@ -43,43 +103,111 @@ enum InterludeType: String, CaseIterable, Identifiable {
     }
 }
 
+enum RunStyle: String, CaseIterable, Identifiable {
+    case manual = "Manual"
+    case automatic = "Automatic"
+
+    var id: String { rawValue }
+}
+
+enum StartMark: Int, CaseIterable, Identifiable {
+    case onTheHour = 0
+    case fifteenAfter = 15
+    case halfPast = 30
+    case fortyFiveAfter = 45
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .onTheHour: "On the hour"
+        case .fifteenAfter: "15 minutes after"
+        case .halfPast: "30 minutes after"
+        case .fortyFiveAfter: "45 minutes after"
+        }
+    }
+}
+
+enum Occurrence: String, CaseIterable, Identifiable {
+    case single = "Once"
+    case recurring = "Recurring"
+
+    var id: String { rawValue }
+}
+
+enum NotificationPreference: String, CaseIterable, Identifiable {
+    case off = "Off"
+    case banner = "Banner"
+    case bannerAndSound = "Banner and sound"
+
+    var id: String { rawValue }
+}
+
 struct SavedInterlude: Identifiable {
     let id: UUID
     var name: String
     var symbolName: String
     var tint: Color
+    var tintName: String
     var type: InterludeType
     /// How often an interval repeats. Unused for timers.
     var repeatMinutes: Int
     /// How long the interlude lasts. Required for timers, optional for intervals.
     var durationMinutes: Int?
+    var runStyle: RunStyle
+    var startMark: StartMark
+    var occurrence: Occurrence
+    var notificationPreference: NotificationPreference
 
     init(
         id: UUID = UUID(),
         name: String,
         symbolName: String,
         tint: Color,
+        tintName: String = "pine",
         type: InterludeType,
         repeatMinutes: Int = 0,
-        durationMinutes: Int? = nil
+        durationMinutes: Int? = nil,
+        runStyle: RunStyle = .manual,
+        startMark: StartMark = .onTheHour,
+        occurrence: Occurrence = .recurring,
+        notificationPreference: NotificationPreference = .off
     ) {
         self.id = id
         self.name = name
         self.symbolName = symbolName
         self.tint = tint
+        self.tintName = tintName
         self.type = type
         self.repeatMinutes = repeatMinutes
         self.durationMinutes = durationMinutes
+        self.runStyle = runStyle
+        self.startMark = startMark
+        self.occurrence = occurrence
+        self.notificationPreference = notificationPreference
     }
 
     var isRunning = false
     var isEnabled = true
     var snoozedUntil: Date?
+    var didFinishSingle = false
+    var lastAutomaticMinute: Date?
     private var storedElapsed: TimeInterval = 0
     private var segmentStartedAt: Date?
 
     var detail: String {
-        InterludeSchedule.detail(type: type, repeatMinutes: repeatMinutes, durationMinutes: durationMinutes)
+        var text = InterludeSchedule.detail(type: type, repeatMinutes: repeatMinutes, durationMinutes: durationMinutes)
+        if runStyle == .automatic {
+            text += " \u{00B7} \(startMark.title)"
+        }
+        if occurrence == .single {
+            text += didFinishSingle ? " \u{00B7} Finished" : " \u{00B7} Once"
+        }
+        return text
+    }
+
+    var wantsClock: Bool {
+        runStyle == .automatic && isEnabled && snoozedUntil == nil && !didFinishSingle
     }
 
     /// Countdown length. A set duration wins; otherwise an interval counts down its repeat.
@@ -103,6 +231,67 @@ struct SavedInterlude: Identifiable {
     func progress(at date: Date) -> Double {
         guard cycleSeconds > 0 else { return 0 }
         return min(1, elapsed(at: date) / cycleSeconds)
+    }
+
+    /// Next automatic start at this interlude's mark. The current mark counts until it has passed.
+    func nextStart(after date: Date) -> Date {
+        let calendar = Calendar.current
+        var components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+        components.minute = startMark.rawValue
+        components.second = 0
+        let mark = calendar.date(from: components) ?? date
+        if mark.timeIntervalSince(date) > -1 {
+            return mark
+        }
+        return calendar.date(byAdding: .hour, value: 1, to: mark) ?? mark.addingTimeInterval(3600)
+    }
+
+    /// Waiting for an automatic start, including after a finished cycle. A paused cycle keeps its own progress.
+    func showsStartCountdown(at date: Date) -> Bool {
+        guard runStyle == .automatic, isEnabled, !isRunning, !didFinishSingle, !isSnoozed(at: date) else {
+            return false
+        }
+        let played = elapsed(at: date)
+        return played <= 0 || played >= cycleSeconds
+    }
+
+    func displayRemaining(at date: Date) -> TimeInterval {
+        if showsStartCountdown(at: date) {
+            return max(0, nextStart(after: date).timeIntervalSince(date))
+        }
+        return remaining(at: date)
+    }
+
+    func displayProgress(at date: Date) -> Double {
+        guard showsStartCountdown(at: date) else { return progress(at: date) }
+        let end = nextStart(after: date)
+        let start = Calendar.current.date(byAdding: .hour, value: -1, to: end) ?? end.addingTimeInterval(-3600)
+        let window = end.timeIntervalSince(start)
+        guard window > 0 else { return 0 }
+        return min(1, max(0, date.timeIntervalSince(start) / window))
+    }
+
+    /// Resume a cycle that was still running when the library was saved.
+    mutating func restorePlayback(isRunning wasRunning: Bool, elapsed: TimeInterval, cycleEnd: Date?, now: Date = .now) {
+        guard wasRunning, let cycleEnd else {
+            isRunning = false
+            storedElapsed = min(cycleSeconds, max(0, elapsed))
+            segmentStartedAt = nil
+            return
+        }
+        if cycleEnd <= now {
+            storedElapsed = cycleSeconds
+            isRunning = false
+            segmentStartedAt = nil
+            if occurrence == .single {
+                didFinishSingle = true
+            }
+            return
+        }
+        let remaining = cycleEnd.timeIntervalSince(now)
+        storedElapsed = min(cycleSeconds, max(0, cycleSeconds - remaining))
+        isRunning = true
+        segmentStartedAt = now
     }
 
     var hasStarted: Bool {
@@ -140,6 +329,7 @@ struct SavedInterlude: Identifiable {
 
     mutating func play(at date: Date) {
         guard isAvailable(at: date) else { return }
+        didFinishSingle = false
         if elapsed(at: date) >= cycleSeconds {
             storedElapsed = 0
         } else {
@@ -162,15 +352,31 @@ struct SavedInterlude: Identifiable {
     }
 
     mutating func completeCycle(at date: Date) {
-        if type == .interval {
-            storedElapsed = 0
-            segmentStartedAt = date
-            isRunning = true
-        } else {
+        let stopAfterCycle = occurrence == .single || runStyle == .automatic || type == .timer
+        if stopAfterCycle {
             storedElapsed = cycleSeconds
             isRunning = false
             segmentStartedAt = nil
+            if occurrence == .single {
+                didFinishSingle = true
+            }
+            return
         }
+        storedElapsed = 0
+        segmentStartedAt = date
+        isRunning = true
+    }
+
+    mutating func startAutomatically(at date: Date) {
+        guard wantsClock, !isRunning else { return }
+        let calendar = Calendar.current
+        guard calendar.component(.minute, from: date) == startMark.rawValue else { return }
+        if let lastAutomaticMinute, calendar.isDate(lastAutomaticMinute, equalTo: date, toGranularity: .minute) {
+            return
+        }
+        lastAutomaticMinute = date
+        reset()
+        play(at: date)
     }
 }
 
@@ -216,12 +422,14 @@ enum InterludeSchedule {
 struct InterludeTemplate: Identifiable {
     let name: String
     let symbolName: String
-    let tint: Color
+    let tintName: String
     let type: InterludeType
     let repeatMinutes: Int
     let durationMinutes: Int?
 
     var id: String { name }
+
+    var tint: Color { DaylightTheme.color(named: tintName) }
 
     var detail: String {
         InterludeSchedule.detail(type: type, repeatMinutes: repeatMinutes, durationMinutes: durationMinutes)
@@ -232,6 +440,7 @@ struct InterludeTemplate: Identifiable {
             name: name,
             symbolName: symbolName,
             tint: tint,
+            tintName: tintName,
             type: type,
             repeatMinutes: repeatMinutes,
             durationMinutes: durationMinutes
@@ -241,25 +450,28 @@ struct InterludeTemplate: Identifiable {
 
 enum InterludeLibrary {
     static let suggestions: [InterludeTemplate] = [
-        InterludeTemplate(name: "Stand up / walk", symbolName: "figure.walk", tint: DaylightTheme.leaf, type: .interval, repeatMinutes: 45, durationMinutes: nil),
-        InterludeTemplate(name: "Take a break", symbolName: "cup.and.saucer", tint: DaylightTheme.amber, type: .timer, repeatMinutes: 0, durationMinutes: 5),
-        InterludeTemplate(name: "Look away", symbolName: "eye", tint: DaylightTheme.sky, type: .interval, repeatMinutes: 20, durationMinutes: nil),
-        InterludeTemplate(name: "Breathing", symbolName: "lungs", tint: DaylightTheme.lilac, type: .interval, repeatMinutes: 60, durationMinutes: 1),
-        InterludeTemplate(name: "Drink water", symbolName: "drop.fill", tint: DaylightTheme.water, type: .interval, repeatMinutes: 60, durationMinutes: nil),
-        InterludeTemplate(name: "Eat lunch", symbolName: "fork.knife", tint: DaylightTheme.tomato, type: .timer, repeatMinutes: 0, durationMinutes: 45),
-        InterludeTemplate(name: "Stretch", symbolName: "figure.flexibility", tint: DaylightTheme.rose, type: .interval, repeatMinutes: 30, durationMinutes: nil),
+        InterludeTemplate(name: "Stand up", symbolName: "figure.walk", tintName: "leaf", type: .interval, repeatMinutes: 45, durationMinutes: nil),
+        InterludeTemplate(name: "Take a break", symbolName: "cup.and.saucer", tintName: "amber", type: .timer, repeatMinutes: 0, durationMinutes: 5),
+        InterludeTemplate(name: "Look away", symbolName: "eye", tintName: "sky", type: .interval, repeatMinutes: 20, durationMinutes: nil),
+        InterludeTemplate(name: "Breathing", symbolName: "lungs", tintName: "lilac", type: .interval, repeatMinutes: 60, durationMinutes: 1),
+        InterludeTemplate(name: "Drink water", symbolName: "drop.fill", tintName: "water", type: .interval, repeatMinutes: 60, durationMinutes: nil),
+        InterludeTemplate(name: "Eat lunch", symbolName: "fork.knife", tintName: "tomato", type: .timer, repeatMinutes: 0, durationMinutes: 45),
+        InterludeTemplate(name: "Stretch", symbolName: "figure.flexibility", tintName: "rose", type: .interval, repeatMinutes: 30, durationMinutes: nil),
     ]
 }
 
 struct ContentView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var interludes: [SavedInterlude]
     @State private var isAdding: Bool
 
     init() {
-        _interludes = State(initialValue: [])
-        _isAdding = State(initialValue: true)
+        let stored = InterludeLibraryStore.loadInterludes()
+        _interludes = State(initialValue: stored)
+        _isAdding = State(initialValue: stored.isEmpty)
+        InterludeLibraryStore.save(stored)
     }
 
     fileprivate init(previewInterludes: [SavedInterlude]) {
@@ -299,6 +511,27 @@ struct ContentView: View {
                     isAdding = false
                 }
             }
+            .onChange(of: libraryToken) { _, _ in
+                InterludeLibraryStore.save(interludes)
+                InterludeNotifications.sync(interludes)
+            }
+            .onOpenURL { url in
+                if InterludeQuickAction.matches(url) {
+                    isAdding = true
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .interludeAdd)) { _ in
+                _ = InterludeQuickAction.shared.consumeAdd()
+                isAdding = true
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    openAddIfRequested()
+                }
+            }
+            .onAppear {
+                openAddIfRequested()
+            }
         }
     }
 
@@ -331,14 +564,37 @@ struct ContentView: View {
     }
 
     private var emptyState: some View {
-        Text("No interludes yet.")
-            .font(.body)
-            .foregroundStyle(DaylightTheme.titleColor(for: colorScheme).opacity(0.72))
-            .frame(maxWidth: .infinity, alignment: .leading)
+        Button {
+            isAdding = true
+        } label: {
+            Text("Add new interlude")
+                .font(.headline)
+                .foregroundStyle(colorScheme == .dark ? DaylightTheme.deepSea : .white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    colorScheme == .dark ? DaylightTheme.mist : DaylightTheme.pine,
+                    in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Add new interlude")
+    }
+
+    private func openAddIfRequested() {
+        if InterludeQuickAction.shared.consumeAdd() {
+            isAdding = true
+        }
     }
 
     private var tracksTime: Bool {
-        interludes.contains { $0.isRunning || $0.snoozedUntil != nil }
+        interludes.contains { $0.isRunning || $0.snoozedUntil != nil || $0.wantsClock }
+    }
+
+    private var libraryToken: String {
+        interludes.map { interlude in
+            "\(interlude.id)|\(interlude.name)|\(interlude.symbolName)|\(interlude.tintName)|\(interlude.type.rawValue)|\(interlude.repeatMinutes)|\(interlude.durationMinutes ?? -1)|\(interlude.runStyle.rawValue)|\(interlude.startMark.rawValue)|\(interlude.occurrence.rawValue)|\(interlude.notificationPreference.rawValue)|\(interlude.isEnabled)|\(interlude.didFinishSingle)|\(interlude.isRunning)"
+        }.joined(separator: ";")
     }
 
     private var interludeColumn: some View {
@@ -358,19 +614,17 @@ struct ContentView: View {
 
     private func interludeStack(at date: Date) -> some View {
         VStack(spacing: 16) {
-            ForEach(interludes) { interlude in
-                GlassEffectContainer(spacing: 12) {
-                    InterludeCard(
-                        interlude: interlude,
-                        now: date,
-                        onPlayPause: { togglePlayback(interlude.id, at: .now) },
-                        onReset: { resetPlayback(interlude.id) },
-                        onSetEnabled: { setEnabled(interlude.id, enabled: $0, at: .now) },
-                        onSnooze: { snooze(interlude.id, minutes: $0, at: .now) },
-                        onEndSnooze: { endSnooze(interlude.id) },
-                        onRemove: { removeInterlude(interlude.id) }
-                    )
-                }
+            ForEach($interludes) { $interlude in
+                InterludeCard(
+                    interlude: $interlude,
+                    now: date,
+                    onPlayPause: { togglePlayback(interlude.id, at: .now) },
+                    onReset: { resetPlayback(interlude.id) },
+                    onSetEnabled: { setEnabled(interlude.id, enabled: $0, at: .now) },
+                    onSnooze: { snooze(interlude.id, minutes: $0, at: .now) },
+                    onEndSnooze: { endSnooze(interlude.id) },
+                    onRemove: { removeInterlude(interlude.id) }
+                )
                 .swipeToRemove { removeInterlude(interlude.id) }
             }
         }
@@ -381,8 +635,10 @@ struct ContentView: View {
         guard interludes[index].isAvailable(at: date) else { return }
         if interludes[index].isRunning {
             interludes[index].pause(at: date)
+            InterludeNotifications.cancelCompletion(id)
         } else {
             interludes[index].play(at: date)
+            InterludeNotifications.scheduleCompletion(interludes[index], at: date)
         }
     }
 
@@ -416,6 +672,11 @@ struct ContentView: View {
         for index in interludes.indices {
             if let until = interludes[index].snoozedUntil, date >= until {
                 interludes[index].endSnooze()
+            }
+            let wasRunning = interludes[index].isRunning
+            interludes[index].startAutomatically(at: date)
+            if !wasRunning, interludes[index].isRunning {
+                InterludeNotifications.scheduleCompletion(interludes[index], at: date)
             }
             if interludes[index].isRunning && interludes[index].remaining(at: date) <= 0 {
                 interludes[index].completeCycle(at: date)
@@ -457,7 +718,7 @@ struct SuggestionCard: View {
 private struct InterludeCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    let interlude: SavedInterlude
+    @Binding var interlude: SavedInterlude
     let now: Date
     var onPlayPause: () -> Void
     var onReset: () -> Void
@@ -466,12 +727,14 @@ private struct InterludeCard: View {
     var onEndSnooze: () -> Void
     var onRemove: () -> Void
 
+    @State private var isFlipped = false
+
     private var isAvailable: Bool {
         interlude.isAvailable(at: now)
     }
 
     private var remainingText: String {
-        InterludeSchedule.clock(interlude.remaining(at: now))
+        InterludeSchedule.clock(interlude.displayRemaining(at: now))
     }
 
     private var statusDetail: String {
@@ -486,6 +749,36 @@ private struct InterludeCard: View {
     }
 
     var body: some View {
+        Group {
+            if isFlipped {
+                InterludeConfiguration(interlude: $interlude) {
+                    isFlipped = false
+                }
+                .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+            } else {
+                front
+            }
+        }
+        .rotation3DEffect(.degrees(isFlipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+        .animation(.spring(duration: 0.5), value: isFlipped)
+    }
+
+    private var front: some View {
+        GlassEffectContainer(spacing: 12) {
+            cardChrome
+        }
+        .overlay(alignment: .topTrailing) {
+            playbackButtons
+                .padding(.top, 24)
+                .padding(.trailing, 16)
+        }
+        .opacity(isAvailable ? 1 : 0.72)
+        .accessibilityHint("Configure")
+        .accessibilityAction(named: "Configure") { isFlipped = true }
+        .accessibilityAction(named: "Remove") { onRemove() }
+    }
+
+    private var cardChrome: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 16) {
                 InterludeDecal(symbolName: interlude.symbolName, tint: interlude.tint)
@@ -498,61 +791,83 @@ private struct InterludeCard: View {
                         .foregroundStyle(DaylightTheme.detailColor(interlude.tint, for: colorScheme))
                 }
 
-                Spacer(minLength: 8)
-
-                HStack(spacing: 8) {
-                    Button(action: onPlayPause) {
-                        Image(systemName: interlude.isRunning ? "pause.fill" : "play.fill")
-                            .frame(width: 36, height: 36)
-                    }
-                    .disabled(!isAvailable)
-                    .accessibilityLabel(interlude.isRunning ? "Pause" : "Play")
-
-                    Button(action: onReset) {
-                        Image(systemName: "stop.fill")
-                            .frame(width: 36, height: 36)
-                    }
-                    .disabled(!interlude.hasStarted)
-                    .accessibilityLabel("Stop and reset")
-
-                    Menu {
-                        if interlude.isEnabled {
-                            Button("Turn off", systemImage: "power") { onSetEnabled(false) }
-                        } else {
-                            Button("Turn on", systemImage: "power") { onSetEnabled(true) }
-                        }
-                        if interlude.isSnoozed(at: now) {
-                            Button("End snooze", systemImage: "alarm") { onEndSnooze() }
-                        }
-                        Button("Snooze 15 min", systemImage: "moon.zzz") { onSnooze(15) }
-                        Button("Snooze 1 hour", systemImage: "moon.zzz") { onSnooze(60) }
-                    } label: {
-                        Image(systemName: availabilitySymbol)
-                            .frame(width: 36, height: 36)
-                    }
-                    .accessibilityLabel("Snooze or turn off")
-                }
-                .buttonStyle(.bordered)
-                .tint(interlude.tint)
-                .font(.body.weight(.semibold))
+                Spacer(minLength: 0)
             }
+            .padding(.trailing, 132)
 
             HStack(spacing: 12) {
-                ProgressView(value: interlude.progress(at: now))
+                ProgressView(value: interlude.displayProgress(at: now))
                     .tint(interlude.tint)
-                    .accessibilityLabel("Time remaining")
+                    .accessibilityLabel(interlude.showsStartCountdown(at: now) ? "Time until start" : "Time remaining")
                     .accessibilityValue(remainingText)
                 Text(remainingText)
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(interlude.tint)
                     .accessibilityHidden(true)
             }
+            .allowsHitTesting(false)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular.tint(interlude.tint.opacity(isAvailable ? 0.45 : 0.2)), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .opacity(isAvailable ? 1 : 0.72)
-        .accessibilityAction(named: "Remove") { onRemove() }
+        .contentShape(.interaction, RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture { isFlipped = true }
+    }
+
+    private var playbackButtons: some View {
+        HStack(spacing: 8) {
+            controlButton(
+                systemName: interlude.isRunning ? "pause.fill" : "play.fill",
+                enabled: isAvailable,
+                label: interlude.isRunning ? "Pause" : "Play",
+                action: onPlayPause
+            )
+            controlButton(
+                systemName: "stop.fill",
+                enabled: interlude.hasStarted,
+                label: "Stop and reset",
+                action: onReset
+            )
+            Menu {
+                if interlude.isEnabled {
+                    Button("Disable", systemImage: "power") { onSetEnabled(false) }
+                } else {
+                    Button("Enable", systemImage: "power") { onSetEnabled(true) }
+                }
+                if interlude.isSnoozed(at: now) {
+                    Button("End snooze", systemImage: "alarm") { onEndSnooze() }
+                }
+                Button("Snooze 15 min", systemImage: "moon.zzz") { onSnooze(15) }
+                Button("Snooze 1 hour", systemImage: "moon.zzz") { onSnooze(60) }
+            } label: {
+                controlIcon(availabilitySymbol)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Snooze or disable")
+        }
+    }
+
+    private func controlButton(systemName: String, enabled: Bool, label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            guard enabled else { return }
+            action()
+        } label: {
+            controlIcon(systemName)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    private func controlIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.body.weight(.bold))
+            .foregroundStyle(colorScheme == .dark ? DaylightTheme.deepSea : .white)
+            .frame(width: 36, height: 36)
+            .background(controlPlate, in: Circle())
+    }
+
+    private var controlPlate: Color {
+        colorScheme == .dark ? DaylightTheme.detailColor(interlude.tint, for: .dark) : interlude.tint
     }
 
     private var availabilitySymbol: String {
@@ -696,9 +1011,9 @@ private struct SwipeToRemoveModifier: ViewModifier {
 
 #Preview("With interludes") {
     ContentView(previewInterludes: [
-        SavedInterlude(name: "Look away", symbolName: "eye", tint: DaylightTheme.sky, type: .interval, repeatMinutes: 20),
-        SavedInterlude(name: "Breathing", symbolName: "lungs", tint: DaylightTheme.lilac, type: .interval, repeatMinutes: 60, durationMinutes: 1),
-        SavedInterlude(name: "Take a break", symbolName: "cup.and.saucer", tint: DaylightTheme.amber, type: .timer, durationMinutes: 5),
+        SavedInterlude(name: "Look away", symbolName: "eye", tint: DaylightTheme.sky, tintName: "sky", type: .interval, repeatMinutes: 20),
+        SavedInterlude(name: "Breathing", symbolName: "lungs", tint: DaylightTheme.lilac, tintName: "lilac", type: .interval, repeatMinutes: 60, durationMinutes: 1),
+        SavedInterlude(name: "Take a break", symbolName: "cup.and.saucer", tint: DaylightTheme.amber, tintName: "amber", type: .timer, durationMinutes: 5),
     ])
 }
 
